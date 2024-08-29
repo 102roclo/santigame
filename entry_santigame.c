@@ -4,6 +4,7 @@
 float player_speed = 100;
 
 const int tile_width = 8;
+const float entity_selection_radius = 16.0f;
 
 int world_pos_to_tile_pos(float world_pos) {
 	return roundf(world_pos / (float)tile_width);
@@ -83,6 +84,13 @@ typedef struct World {
 	Entity entities[MAX_ENTITY_COUNT];
 } World;
 World* world = 0;
+
+typedef struct WoldFrame {
+	Entity* selected_entity;
+} WorldFrame;
+WorldFrame world_frame;
+
+
 
 Entity* entity_create() {
 	Entity* entity_found = 0;
@@ -172,14 +180,14 @@ int entry(int argc, char **argv) {
 		setup_flower(en);
 		en->pos = v2(get_random_float32_in_range(-200, 200), get_random_float32_in_range(-200, 200));
 		en->pos = round_v2_to_tile(en->pos);
-		en->pos.y -= tile_width * 0.5;
+		//en->pos.y -= tile_width * 0.5;
 	}
 	for (int i = 0; i < 10; i++){
 		Entity* en = entity_create();
 		setup_tree(en);
 		en->pos = v2(get_random_float32_in_range(-200, 200), get_random_float32_in_range(-200, 200));
 		en->pos = round_v2_to_tile(en->pos);
-		en->pos.y -= tile_width * 0.5;
+		//en->pos.y -= tile_width * 0.5;
 	}
 	
 	float64 seconds_counter = 0.0;
@@ -192,6 +200,7 @@ int entry(int argc, char **argv) {
 	float64 last_time = os_get_elapsed_seconds();
 	while (!window.should_close) {
 		reset_temporary_storage();
+		world_frame = (WorldFrame){0};
 
 		float64 now = os_get_elapsed_seconds();
 		float64 delta_t = now - last_time;
@@ -211,12 +220,17 @@ int entry(int argc, char **argv) {
 		}
 
 		
-		Vector2 mouse_pos = screen_to_world();
-		int mouse_tile_x = world_pos_to_tile_pos(mouse_pos.x);
-		int mouse_tile_y = world_pos_to_tile_pos(mouse_pos.y); 
+		Vector2 mouse_pos_world = screen_to_world();
+		int mouse_tile_x = world_pos_to_tile_pos(mouse_pos_world.x);
+		int mouse_tile_y = world_pos_to_tile_pos(mouse_pos_world.y); 
+
+
+		Entity* selected_entity;
 		// mouse pos in wold space
 		{
-			//draw_text(font, sprint(get_temporary_allocator(), "%f %f" , mouse_pos.x, mouse_pos.y), font_height, mouse_pos, v2(0.1, 0.1), COLOR_RED);
+			//draw_text(font, sprint(get_temporary_allocator(), "%f %f" , mouse_pos_world.x, mouse_pos_world.y), font_height, mouse_pos_world, v2(0.1, 0.1), COLOR_RED);
+
+			float smallest_dist = INFINITY;
 
 			// :selected entity system		
 			for (int i = 0; i < MAX_ENTITY_COUNT; i++) {
@@ -225,16 +239,18 @@ int entry(int argc, char **argv) {
 				
 				if(en->is_valid && entity_archetype_selected > 1) {
 					Sprite* sprite = get_sprite(en->sprite_id);
-					Range2f bounds = range2f_make_bottom_center(sprite->size);
-					bounds = range2f_shift(bounds, en->pos);
-					
-					Vector4 entity_highlight_color = COLOR_RED;
-					entity_highlight_color.a = 0.4;
-					if (range2f_contains(bounds, mouse_pos)) {
-						entity_highlight_color.a = 0.85;
-					}
 
-					draw_rect(bounds.min, range2f_size(bounds), entity_highlight_color);
+					int entity_tile_x = world_pos_to_tile_pos(en->pos.x);
+					int entity_tile_y = world_pos_to_tile_pos(en->pos.y);
+
+					float dist = fabsf(v2_dist(en->pos, mouse_pos_world));
+					if (dist < entity_selection_radius) {
+						if (!world_frame.selected_entity || (dist < smallest_dist)) {
+							world_frame.selected_entity = en;
+							smallest_dist = dist;
+
+						}
+					}										
 				}
 			}
 		}
@@ -258,7 +274,7 @@ int entry(int argc, char **argv) {
 					}
 				}
 		
-			draw_rect(v2(tile_pos_to_world_pos(mouse_tile_x) + tile_width * -0.5, tile_pos_to_world_pos(mouse_tile_y) + tile_width * -0.5), v2(tile_width, tile_width), v4(0.5, 0.5, 0.5, 0.5));
+		//	draw_rect(v2(tile_pos_to_world_pos(mouse_tile_x) + tile_width * -0.5, tile_pos_to_world_pos(mouse_tile_y) + tile_width * -0.5), v2(tile_width, tile_width), v4(0.5, 0.5, 0.5, 0.5));
 		}
 
 		//render
@@ -271,16 +287,22 @@ int entry(int argc, char **argv) {
 					{
 						Sprite* sprite = get_sprite(en->sprite_id);
 						Matrix4 xform = m4_scalar(1.0);
-						xform         = m4_translate(xform, v3(0, (float)tile_width * -0.5, 0));
+						xform         = m4_translate(xform, v3(0, tile_width * -0.5, 0));
 						xform         = m4_translate(xform, v3(en->pos.x, en->pos.y, 0));
 						xform         = m4_translate(xform, v3(sprite->size.x * -0.5, 0.0, 0));
-						draw_image_xform(sprite->image, xform, sprite->size, COLOR_WHITE);
 
-						draw_text(font, sprint(get_temporary_allocator(), "%f %f" , en->pos.x, en->pos.y), font_height, en->pos, v2(0.1, 0.1), COLOR_GREEN);
+						Vector4 col = COLOR_WHITE;
+						if (world_frame.selected_entity == en) {
+							col = COLOR_RED;
+						}
+
+						draw_image_xform(sprite->image, xform, sprite->size, col);
+
+						// debug pos
+						//draw_text(font, sprint(get_temporary_allocator(), "%f %f" , en->pos.x, en->pos.y), font_height, en->pos, v2(0.1, 0.1), COLOR_GREEN);
 					
 					break;					
-					}
-					
+					}					
 				}
 			}
 		}

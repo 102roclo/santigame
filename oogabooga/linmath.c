@@ -66,6 +66,15 @@ inline Vector2 v2_divf(Vector2 a, float32 s) {
 	return v2_div(a, v2(s, s));
 }
 
+inline float v2_Length(Vector2 a) {
+    return sqrt(a.x * a.x + a.y * a.y);
+}
+
+inline float v2_dist(Vector2 a, Vector2 b) {
+    Vector2 diff = v2_sub(a, b);
+    return v2_Length(diff);
+}
+
 inline Vector3 v3_add(Vector3 a, Vector3 b) {
 	return v3(a.x+b.x, a.y+b.y, a.z+b.z);
 }
