@@ -5,6 +5,10 @@
             "label": "Compile",
             "type": "shell",
             "command": "${workspaceFolder}\\build",
+            "args": [
+                "--flag",
+                "-fdiagnostics-absolute-paths"
+            ],
             "group": {
                 "kind": "build",
                 "isDefault": true
@@ -21,6 +25,10 @@
             "label": "Compile Release",
             "type": "shell",
             "command": "${workspaceFolder}\\build_release",
+            "args": [
+                "--flag",
+                "-fdiagnostics-absolute-paths"
+            ],
             "group": {
                 "kind": "build"
             },
