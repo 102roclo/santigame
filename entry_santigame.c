@@ -2,6 +2,8 @@
 #include "entry_santigame.h"
 
 
+// resizable array helpers
+
 // 0 -> 1
 float sin_breathe(float time, float rate) {
 	return ((sin(time * rate) + 1.0) / 2.0);
@@ -35,9 +37,11 @@ float player_speed = 100;
 
 const int tile_width = 8;
 const float entity_selection_radius = 16.0f;
+const float player_pickup_radius = 20.0f;
 
 const int tree_health = 3;
 const int flower_health = 3;
+const int rock_health = 3;
 
 int world_pos_to_tile_pos(float world_pos) {
 	return roundf(world_pos / (float)tile_width);
@@ -86,7 +90,6 @@ Vector2 get_sprite_size(Sprite* sprite) {
 	return (Vector2) { sprite->image->width, sprite->image->height};
 }
 
-
 typedef enum EntityArchetype {
 	arch_nil = 0,
 	arch_player = 1,
@@ -101,6 +104,18 @@ typedef enum EntityArchetype {
 	arch_MAX,
 } EntityArchetype;
 
+SpriteID get_sprite_id_from_archetype(EntityArchetype arch ) {
+	switch (arch)
+	{
+	case arch_item_pine_wood: return SPRITE_item_pine_wood;	break;
+	case arch_item_cyan_pigment: return SPRITE_item_cyan_pigment;break;
+	case arch_item_magenta_pigment: return SPRITE_item_magenta_pigment;	break;
+	case arch_item_rock: return SPRITE_item_rock;	break;
+
+	default: return 0;
+	}
+}
+
 
 typedef struct Entity {
 	bool is_valid;
@@ -113,8 +128,15 @@ typedef struct Entity {
 	bool is_item;
 } Entity;
 
+#define MAX_INVENTORY_COUNT arch_MAX;
+
+typedef struct ItemData {
+	int amount;
+} ItemData;
+
 typedef struct World {
 	Entity entities[MAX_ENTITY_COUNT];
+	ItemData iventory_items[arch_MAX];
 } World;
 World* world = 0;
 
@@ -159,7 +181,14 @@ void setup_tree(Entity* en) {
 	en->detroyable_world_item = true;
 }
 
-void setup_item_pinewood(Entity* en) {
+void setup_rock(Entity* en) {
+	en->arch = arch_rock;
+	en->sprite_id = SPRITE_rock;
+	en->health = rock_health;
+	en->detroyable_world_item = true;
+}
+
+void setup_item_pine_wood(Entity* en) {
 	en->arch = arch_item_pine_wood;
 	en->sprite_id = SPRITE_item_pine_wood;
 	en->is_item = true;
@@ -210,8 +239,6 @@ Vector2 screen_to_world() {
 	return (Vector2){ worldPos.x, worldPos.y};
 }
 
-float time_since_destroyed_entity = 0.0f;
-
 int entry(int argc, char **argv) {
 
 	window.title = fixed_string("El Santi Juego");
@@ -229,33 +256,45 @@ int entry(int argc, char **argv) {
 	assert(font, "Failed loading arial.ttf, %d", GetLastError());
 	const u32 font_height = 48;
 
+	// :init
+
+	// test item adding
+
+	{
+		world->iventory_items[arch_item_pine_wood].amount = 5;
+		world->iventory_items[arch_item_cyan_pigment].amount = 5;
+		world->iventory_items[arch_item_magenta_pigment].amount = 5;
+		world->iventory_items[arch_item_rock].amount = 5;		
+	}
+
 	Entity* player_en = entity_create();
 	setup_player(player_en);
-	
-	int entity_counter_flower = 0;
-	int current_entity_counter_flower = 0;
-	int entity_counter_tree = 0;
 
 	const int MAX_FLOWER_ENTITY_AMOUNT = 10;
 	const int MAX_TREE_ENTITY_AMOUNT = 10;
+ 	const int MAX_ROCK_ENTITY_AMOUNT = 10;
+
 
 	for (int i = 0; i < MAX_FLOWER_ENTITY_AMOUNT; i++){
 		Entity* en = entity_create();
-		//entity_counter_flower = i;
 		setup_flower(en);
 		en->pos = v2(get_random_float32_in_range(-200, 200), get_random_float32_in_range(-200, 200));
 		en->pos = round_v2_to_tile(en->pos);
 		//en->pos.y -= tile_width * 0.5;
-		//log("There are: %i, flowers.", (entity_counter_flower + 1));
 	}
 	for (int i = 0; i < MAX_TREE_ENTITY_AMOUNT; i++){
 		Entity* en = entity_create();
-		//entity_counter_tree = i;
 		setup_tree(en);
 		en->pos = v2(get_random_float32_in_range(-200, 200), get_random_float32_in_range(-200, 200));
 		en->pos = round_v2_to_tile(en->pos);
 		//en->pos.y -= tile_width * 0.5;
-		//log("There are: %i, trees.", (entity_counter_tree + 1));
+	}
+	for (int i = 0; i < MAX_ROCK_ENTITY_AMOUNT; i++){
+		Entity* en = entity_create();
+		setup_rock(en);
+		en->pos = v2(get_random_float32_in_range(-200, 200), get_random_float32_in_range(-200, 200));
+		en->pos = round_v2_to_tile(en->pos);
+		//en->pos.y -= tile_width * 0.5;
 	}
 	
 	float64 seconds_counter = 0.0;
@@ -304,8 +343,6 @@ int entry(int argc, char **argv) {
 			//draw_text(font, sprint(get_temporary_allocator(), "%f %f" , mouse_pos_world.x, mouse_pos_world.y), font_height, mouse_pos_world, v2(0.1, 0.1), COLOR_RED);
 
 			float smallest_dist = 0.000000001;
-			
-
 			// :selected entity system		
 			for (int i = 0; i < MAX_ENTITY_COUNT; i++) {
 				Entity* en = &world->entities[i];
@@ -349,7 +386,25 @@ int entry(int argc, char **argv) {
 		//	draw_rect(v2(tile_pos_to_world_pos(mouse_tile_x) + tile_width * -0.5, tile_pos_to_world_pos(mouse_tile_y) + tile_width * -0.5), v2(tile_width, tile_width), v4(0.5, 0.5, 0.5, 0.5));
 		}
 
-		// :clicky thingy
+		// :update entities
+		
+		for (int i = 0; i < MAX_ENTITY_COUNT; i++) {
+			Entity* en = &world->entities[i];
+			if(en->is_valid) {
+
+				// pick up item
+				if(en->is_item) {
+					//TODO - physics pickup
+
+					if (fabsf(v2_dist(en->pos, player_en->pos)) < player_pickup_radius) {
+						world->iventory_items[en->arch].amount += 1;
+						entity_destroy(en);
+					}
+				}					
+			}
+		}
+		
+		// :click destroy
 		{
 			Entity* selected_en = world_frame.selected_entity;
 
@@ -361,28 +416,22 @@ int entry(int argc, char **argv) {
 					if(selected_en->health <= 0) {
 
 						switch (selected_en->arch) {
-						case arch_flower: {
-							{
+						case arch_flower: {							
 							Entity* en = entity_create();
 							setup_item_flower0(en);
-							en->pos = selected_en->pos;
-							}
+							en->pos = selected_en->pos;							
 						}
 						break;
-						case arch_tree: {
-							{
+						case arch_tree: {							
 							Entity* en = entity_create();
-							setup_item_pinewood(en);
-							en->pos = selected_en->pos;
-							}
+							setup_item_pine_wood(en);
+							en->pos = selected_en->pos;							
 						}
 						break;
-						case arch_rock: {
-							{
+						case arch_rock: {							
 							Entity* en = entity_create();
 							setup_item_rock(en);
-							en->pos = selected_en->pos;
-							}
+							en->pos = selected_en->pos;							
 						}
 						break;
 						default: {}	break;
@@ -395,7 +444,7 @@ int entry(int argc, char **argv) {
 		}
 
 
-		//render
+		// :render entities
 		for (int i = 0; i < MAX_ENTITY_COUNT; i++) {
 			Entity* en = &world->entities[i];
 			if(en->is_valid) {
@@ -429,6 +478,53 @@ int entry(int argc, char **argv) {
 			}
 		}
 
+		// do UI rendering
+		{
+			float width = 240;
+			float height = 135.0;
+			
+			draw_frame.camera_xform = m4_scalar(1.0);
+			draw_frame.projection = m4_make_orthographic_projection(0.0, width, 0.0, height, -1, 10);
+
+			float y_pos = 70.0;
+
+			int item_count = 0;
+
+			for(int i = 0; i < arch_MAX; i++ ) {
+				ItemData* item = &world->iventory_items[i];
+				if (item->amount > 0) {
+					item_count += 1;
+				}
+			}
+
+			const float icon_thing = 8.0;
+			const float padding = 2.0;
+			float icon_width = icon_thing + padding;
+
+			float entire_thing_width = item_count * icon_width;
+			float x_start_pos = (width/2.0)-(entire_thing_width/2.0) + (icon_width * 0.5);
+
+			int slot_index = 0;
+			for(int i = 0; i < arch_MAX; i++ ) {
+				ItemData* item = &world->iventory_items[i];
+				if (item->amount > 0) {
+
+					float slot_index_offset = slot_index * icon_width;
+
+					Matrix4 xform = m4_scalar(1.0);
+					xform = m4_translate(xform, v3(x_start_pos + slot_index_offset, y_pos, 0.0));
+					xform = m4_translate(xform, v3(-4, -4, 0.0));
+
+					draw_rect_xform(xform, v2(8, 8), COLOR_BLACK);	
+				
+					Sprite* sprite = get_sprite(get_sprite_id_from_archetype(i));
+					
+					draw_image_xform(sprite->image, xform, get_sprite_size(sprite), COLOR_WHITE);
+
+					slot_index += 1;
+				}
+			}							
+		}
 
 		// input		
 		{
@@ -471,14 +567,16 @@ int entry(int argc, char **argv) {
 
 void SetSprites()
 {
+	sprites[0] = (Sprite){.image = load_image_from_disk(STR("res/sprites/missingTexture.jpeg"), get_heap_allocator())};
     sprites[SPRITE_player] = (Sprite){.image = load_image_from_disk(STR("res/sprites/player.jpeg"), get_heap_allocator())};
     sprites[SPRITE_tree0] = (Sprite){.image = load_image_from_disk(STR("res/sprites/tree00.jpeg"), get_heap_allocator())};
     sprites[SPRITE_tree1] = (Sprite){.image = load_image_from_disk(STR("res/sprites/tree01.jpeg"), get_heap_allocator())};
+	sprites[SPRITE_rock] = (Sprite){.image = load_image_from_disk(STR("res/sprites/rock0.jpeg"), get_heap_allocator())};
     sprites[SPRITE_flower0] = (Sprite){.image = load_image_from_disk(STR("res/sprites/flower00.jpeg"), get_heap_allocator())};
     sprites[SPRITE_flower1] = (Sprite){.image = load_image_from_disk(STR("res/sprites/flower01.jpeg"), get_heap_allocator())};
     sprites[SPRITE_item_pine_wood] = (Sprite){.image = load_image_from_disk(STR("res/sprites/pineWoodItem.jpeg"), get_heap_allocator())};
     sprites[SPRITE_item_cyan_pigment] = (Sprite){.image = load_image_from_disk(STR("res/sprites/cyanPigmentItem.jpeg"), get_heap_allocator())};
     sprites[SPRITE_item_magenta_pigment] = (Sprite){.image = load_image_from_disk(STR("res/sprites/flower1_item.jpeg"), get_heap_allocator())};
-    sprites[SPRITE_item_rock] = (Sprite){.image = load_image_from_disk(STR("res/sprites/rock_item.jpeg"), get_heap_allocator())};
+    sprites[SPRITE_item_rock] = (Sprite){.image = load_image_from_disk(STR("res/sprites/rockItem.jpeg"), get_heap_allocator())};
     sprites[SPRITE_paintbrush] = (Sprite){.image = load_image_from_disk(STR("res/sprites/paintbrush.jpeg"), get_heap_allocator())};
 }
