@@ -2,7 +2,32 @@
 #include "entry_santigame.h"
 
 
+#define m4_identity  m4_make_scale(v3(1, 1, 1))
+
+// ^^^ engine changes
+
+// the scuff zone
+
+Draw_Quad ndc_quad_to_screen_quad(Draw_Quad ndc_quad){
+	
+	// NOTE: assume this are the screen space matrices.
+	Matrix4 proj = draw_frame.projection;
+	Matrix4 view = draw_frame.camera_xform;
+
+	Matrix4 ndc_to_screen_space = m4_identity;
+	ndc_to_screen_space = m4_mul(ndc_to_screen_space, m4_inverse(proj));
+	ndc_to_screen_space = m4_mul(ndc_to_screen_space, view);
+
+	ndc_quad.bottom_left = m4_transform(ndc_to_screen_space, v4(v2_expand(ndc_quad.bottom_left), 0, 1)).xy;
+	ndc_quad.bottom_right = m4_transform(ndc_to_screen_space, v4(v2_expand(ndc_quad.bottom_right), 0, 1)).xy;
+	ndc_quad.top_left = m4_transform(ndc_to_screen_space, v4(v2_expand(ndc_quad.top_left), 0, 1)).xy;
+	ndc_quad.top_right = m4_transform(ndc_to_screen_space, v4(v2_expand(ndc_quad.top_right), 0, 1)).xy;
+
+	return ndc_quad;
+}
+
 // resizable array helpers
+
 
 // 0 -> 1
 float sin_breathe(float time, float rate) {
@@ -28,8 +53,16 @@ void animate_v2_to_target(Vector2* value, Vector2 target, float delta_t, float r
 	animate_f32_to_target(&(value->y), target.y, delta_t, rate);
 }
 
+Range2f quad_to_range(Draw_Quad quad) {
+	return (Range2f){quad.bottom_left, quad.top_right};
+}
+
 
 // ^^ generic utils
+
+// :tweaks
+
+Vector4 bg_box_color = {0, 0, 0, 0.5};
 
 float player_speed = 100;
 
@@ -116,6 +149,17 @@ SpriteID get_sprite_id_from_archetype(EntityArchetype arch ) {
 	}
 }
 
+string get_archetype_pretty_name (EntityArchetype arch) {
+	switch (arch)
+	{
+	case arch_item_pine_wood: return STR("Pine Wood");
+	case arch_item_rock: return STR("Rock");
+	case arch_item_cyan_pigment: return STR("Cyan Pigment");
+	case arch_item_magenta_pigment: return STR("Magenta Pigment");
+	default: return STR("nil");
+	}
+}
+
 
 typedef struct Entity {
 	bool is_valid;
@@ -134,9 +178,18 @@ typedef struct ItemData {
 	int amount;
 } ItemData;
 
+typedef enum UXState {
+	UX_nil,
+	UX_inventory,
+	//UX_building,
+} UXState;
+
 typedef struct World {
 	Entity entities[MAX_ENTITY_COUNT];
 	ItemData iventory_items[arch_MAX];
+	UXState ux_state;
+	float inventory_alpha;
+	float inventory_alpha_target;
 } World;
 World* world = 0;
 
@@ -217,6 +270,21 @@ void setup_player(Entity* en) {
 	en->sprite_id = SPRITE_player;
 }
 
+Vector2 get_mouse_pos_in_ndc() {
+	float mouseX = input_frame.mouse_x;
+	float mouseY = input_frame.mouse_y;
+	Matrix4 projection = draw_frame.projection;
+	Matrix4 view = draw_frame.camera_xform;
+	float windowWidth = window.width;
+	float windowHeight = window.height;
+
+	//Normalize the mouse coordinates
+	float ndcX = (mouseX / (windowWidth * 0.5f)) - 1.0f;
+	float ndcY = (mouseY / (windowHeight * 0.5f)) - 1.0f;
+
+	return (Vector2){ ndcX, ndcY};
+}
+
 Vector2 screen_to_world() {
 	float mouseX = input_frame.mouse_x;
 	float mouseY = input_frame.mouse_y;
@@ -261,10 +329,10 @@ int entry(int argc, char **argv) {
 	// test item adding
 
 	{
-		world->iventory_items[arch_item_pine_wood].amount = 5;
-		world->iventory_items[arch_item_cyan_pigment].amount = 5;
-		world->iventory_items[arch_item_magenta_pigment].amount = 5;
-		world->iventory_items[arch_item_rock].amount = 5;		
+		world->iventory_items[arch_item_pine_wood].amount = 0;
+		world->iventory_items[arch_item_cyan_pigment].amount = 0;
+		world->iventory_items[arch_item_magenta_pigment].amount = 0;
+		world->iventory_items[arch_item_rock].amount = 0;		
 	}
 
 	Entity* player_en = entity_create();
@@ -478,7 +546,10 @@ int entry(int argc, char **argv) {
 			}
 		}
 
-		// do UI rendering
+
+		
+
+		// :invetory rendering
 		{
 			float width = 240;
 			float height = 135.0;
@@ -486,6 +557,19 @@ int entry(int argc, char **argv) {
 			draw_frame.camera_xform = m4_scalar(1.0);
 			draw_frame.projection = m4_make_orthographic_projection(0.0, width, 0.0, height, -1, 10);
 
+			// :inventory UI
+
+			if(is_key_just_pressed(KEY_TAB)) {
+				consume_key_just_pressed(KEY_TAB);
+				world->ux_state = (world->ux_state == UX_inventory ? UX_nil : UX_inventory);
+			}
+			world->inventory_alpha_target = (world->ux_state == UX_inventory ? 1.0 : 0.0);
+			animate_f32_to_target(&world->inventory_alpha, world->inventory_alpha_target, delta_t, 15.0);
+			bool is_inventory_enabled = world->inventory_alpha_target == 1.0;
+			if(world->inventory_alpha_target != 0.0)
+			{
+			// TODO - some opacity thing here
+			
 			float y_pos = 70.0;
 
 			int item_count = 0;
@@ -498,14 +582,24 @@ int entry(int argc, char **argv) {
 			}
 
 			const float icon_thing = 8.0;
-			const float padding = 2.0;
-			float icon_width = icon_thing + padding;
+			float icon_width = icon_thing;
 
-			float entire_thing_width = item_count * icon_width;
-			float x_start_pos = (width/2.0)-(entire_thing_width/2.0) + (icon_width * 0.5);
+			const int icon_row_count = 8;
 
+			float entire_thing_width = icon_row_count * icon_width;
+			float x_start_pos = (width/2.0)-(entire_thing_width/2.0);
+
+			// bg box rendering thingy
+			{
+				Matrix4 xform = m4_identity;
+				xform = m4_translate(xform, v3(x_start_pos, y_pos, 0.0));
+				draw_rect_xform(xform, v2(entire_thing_width, icon_width), bg_box_color);
+
+			}
+			
 			int slot_index = 0;
 			for(int i = 0; i < arch_MAX; i++ ) {
+			
 				ItemData* item = &world->iventory_items[i];
 				if (item->amount > 0) {
 
@@ -513,19 +607,105 @@ int entry(int argc, char **argv) {
 
 					Matrix4 xform = m4_scalar(1.0);
 					xform = m4_translate(xform, v3(x_start_pos + slot_index_offset, y_pos, 0.0));
-					xform = m4_translate(xform, v3(-4, -4, 0.0));
-
-					draw_rect_xform(xform, v2(8, 8), COLOR_BLACK);	
-				
+							
 					Sprite* sprite = get_sprite(get_sprite_id_from_archetype(i));
 					
+					float is_selected_alpha = 0.0;
+
+					Draw_Quad* quad = draw_rect_xform(xform, v2(8, 8), v4(1, 1, 1, 0.2));
+					Range2f icon_box = quad_to_range(*quad);
+
+					if(is_inventory_enabled && range2f_contains(icon_box, get_mouse_pos_in_ndc())) {
+						is_selected_alpha = 1.0;
+					}
+					
+					
+					Matrix4 box_bottom_right_xform = xform;
+
+					xform = m4_translate(xform, v3(icon_width * 0.5, icon_width * 0.5, 0.0));
+
+					if(is_selected_alpha == 1.0)
+					
+					{ // todo - selection polish
+					
+						float scale_adjust = 0.3; // * sin_breathe(os_get_current_time_in_seconds(), 20.0);
+						xform = m4_scale(xform, v3(1 + scale_adjust, 1 + scale_adjust, 1));	
+					}
+					{// could also rotate
+					
+					//	float adjust = PI32 * 2 * sin_breathe(os_get_current_time_in_seconds(), 1.0);
+					//	xform = m4_rotate_z(xform, adjust);	
+					}
+					xform = m4_translate(xform, v3(get_sprite_size(sprite).x * -0.5, get_sprite_size(sprite).y * -0.5, 0));
 					draw_image_xform(sprite->image, xform, get_sprite_size(sprite), COLOR_WHITE);
 
+					//draw_text_xform(font, STR("5"), font_height, box_bottom_right_xform, v2(0.1, 0.1), COLOR_BLACK);
+
+					// tooltip
+					if(is_selected_alpha == 1.0)
+
+					{
+						Draw_Quad screen_quad = ndc_quad_to_screen_quad(*quad);
+						Range2f screen_range = quad_to_range(screen_quad);
+						Vector2 icon_center = range2f_get_center(screen_range);
+
+					//	icon_center
+					Matrix4 xform = m4_scalar(1.0);
+
+					// TODO - we guessing at the Y box size here.
+					// in order to automate this, we would need to move it down below after we do all the element advance
+					// things for the text. 
+					// ... but the the box would be drawing in front of everyone. So we´d have to do Z sorting.
+					// Solution for now is to just gess at the size and OOGA BOOGA
+					Vector2 box_size = v2(40, 14);
+
+					//xform = m4_pivot_box(xform, box_size, PIVOT_top_center);
+					xform = m4_translate(xform, v3(box_size.x * -0.5, -box_size.y - icon_width * 0.5, 0));
+					xform = m4_translate(xform, v3(icon_center.x, icon_center.y, 0));
+
+					draw_rect_xform(xform, box_size, bg_box_color);
+
+					float current_y_pos = icon_center.y;
+					{
+					string title = get_archetype_pretty_name(i);
+
+
+					Gfx_Text_Metrics metrics = measure_text(font, title, font_height, v2(0.1, 0.1));
+					Vector2 draw_pos = icon_center;
+					draw_pos = v2_sub(draw_pos, metrics.visual_pos_min);
+					draw_pos = v2_add(draw_pos, v2_mul(metrics.visual_size, v2(-0.5, -1.0))); // top center
+
+					draw_pos = v2_add(draw_pos, v2(0, icon_width * -0.5));
+					draw_pos = v2_add(draw_pos, v2(0, -2.0)); // padding
+
+					draw_text(font, title, font_height, draw_pos, v2(0.1, 0.1), COLOR_WHITE);
+
+					current_y_pos = draw_pos.y;
+
+					}
+
+					{
+						// item->amount;
+					string text = STR("x%i");
+					text = sprint(temp_allocator, text, item->amount);
+
+					Gfx_Text_Metrics metrics = measure_text(font, text, font_height, v2(0.1, 0.1));
+					Vector2 draw_pos = v2(icon_center.x, current_y_pos);
+					draw_pos = v2_sub(draw_pos, metrics.visual_pos_min);
+					draw_pos = v2_add(draw_pos, v2_mul(metrics.visual_size, v2(-0.5, -1.0))); // top center
+
+					draw_pos = v2_add(draw_pos, v2(0, -2.0)); // padding
+
+					draw_text(font, text, font_height, draw_pos, v2(0.1, 0.1), COLOR_WHITE);	
+					}
+
+					}
 					slot_index += 1;
 				}
-			}							
+			}						
 		}
-
+		}
+		
 		// input		
 		{
 		if (is_key_just_pressed(KEY_ESCAPE)) {
