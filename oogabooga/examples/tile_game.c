@@ -101,7 +101,7 @@ Vector2 screen_to_world(Vector2 screen) {
 }
 
 Vector2 get_mouse_world_pos() {
-	return screen_to_world(v2(input_frame.mouse_x, input_frame.mouse_y));
+	return get_mouse_pos_in_world_space(v2(input_frame.mouse_x, input_frame.mouse_y));
 }
 
 void update_editor() {
@@ -125,8 +125,8 @@ void update_editor() {
 	camera_xform = m4_translate(camera_xform, v3(v2_expand(cam_move), 0));
 	draw_frame.camera_xform = camera_xform;
 	
-	Vector2 bottom_left = screen_to_world(v2(-window.width/2, -window.height/2));
-	Vector2 top_right   = screen_to_world(v2( window.width/2,  window.height/2));
+	Vector2 bottom_left = get_mouse_pos_in_world_space(v2(-window.width/2, -window.height/2));
+	Vector2 top_right   = get_mouse_pos_in_world_space(v2( window.width/2,  window.height/2));
 	
 	Vector2 origin = v2(-WORLD_WIDTH/2, -WORLD_HEIGHT/2);
 	int first_visible_tile_x = ((origin.x + bottom_left.x)/WORLD_WIDTH) *X_TILE_COUNT;
