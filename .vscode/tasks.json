@@ -9,11 +9,10 @@
                 "--flag",
                 "-fdiagnostics-absolute-paths"
             ],
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
-            "problemMatcher": ["$gcc"],
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ],
             "presentation": {
                 "clear": true,
                 // "revealProblems": "onProblem",
