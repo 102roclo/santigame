@@ -1,12 +1,28 @@
 #include "range.c"
-#include "entry_santigame.h"
-
 
 #define m4_identity  m4_make_scale(v3(1, 1, 1))
 
 // ^^^ engine changes
 
 // the scuff zone
+
+float float_alpha(float x, float min, float max) {
+	float res = (x-min) / (max-min);
+	res = clamp(res, 0.0, 1.0);
+	return res;
+}
+
+inline float64 now() {
+	return os_get_current_time_in_seconds();
+}
+
+float alpha_from_end_time(float64 end_time, float length) {
+	return float_alpha(now(), end_time-length, end_time);
+}
+
+bool has_reached_end_time(float64 end_time) {
+	return now() > end_time;
+}
 
 Draw_Quad ndc_quad_to_screen_quad(Draw_Quad ndc_quad){
 	
@@ -28,6 +44,7 @@ Draw_Quad ndc_quad_to_screen_quad(Draw_Quad ndc_quad){
 
 // resizable array helpers
 
+#define MAX_RECIPE_INGREDIENTS 8
 
 // 0 -> 1
 float sin_breathe(float time, float rate) {
@@ -111,6 +128,7 @@ typedef enum SpriteID {
 	SPRITE_item_cyan_pigment,
 	SPRITE_item_magenta_pigment,
 	SPRITE_item_rock,
+
 	SPRITE_paintbrush,
 	SPRITE_furnace,
 	SPRITE_workbench,
@@ -136,64 +154,92 @@ Vector2 get_sprite_size(Sprite* sprite) {
 	return (Vector2) { sprite->image->width, sprite->image->height};
 }
 
+typedef enum ItemID {
+	ITEM_nil,
+	ITEM_rock,
+	ITEM_pine_wood,
+	ITEM_cyan_pigment,
+	ITEM_magenta_pigment,
+	// :item
+	ITEM_MAX,
+} ItemID;
+typedef struct InventoryItemData {
+	int amount;
+} InventoryItemData; 
+
+typedef struct ItemAmount {
+	ItemID id;
+	int amount;
+} ItemAmount; 
+
+
 typedef enum EntityArchetype {
 	ARCH_nil = 0,
 	ARCH_player = 1,
 	ARCH_rock = 2,
 	ARCH_tree = 3,
 	ARCH_flower = 4,
+	ARCH_item = 5,
+	ARCH_furnace = 6,
+	ARCH_workbench = 7,
+	ARCH_paint_station = 8,
 
-	ARCH_item_pine_wood = 5,
-	ARCH_item_cyan_pigment = 6,
-	ARCH_item_magenta_pigment = 7,
-	ARCH_item_rock = 8,
-
-	ARCH_furnace = 9,
-	ARCH_workbench = 10,
-	ARCH_paint_station = 11,
 	ARCH_MAX,
 } EntityArchetype;
 
-SpriteID get_sprite_id_from_archetype(EntityArchetype arch ) {
+typedef struct ItemData {
+	string pretty_name;
+	// :recipe crafting
+	EntityArchetype for_structure;
+	ItemAmount crafting_recipe[MAX_RECIPE_INGREDIENTS];
+	float craft_length;
+} ItemData;
+ItemData item_data[ITEM_MAX];
+ItemData get_item_data(ItemID id) {
+	return item_data[id];
+}
+int get_crafting_recipe_count(ItemData item_data){
+	int count = 0;
+	for (int i = 0; i < MAX_RECIPE_INGREDIENTS; i++) {
+		if(item_data.crafting_recipe[i].id == 0) {
+			break;
+		}
+		count += 1;
+	}
+	return count;
+}
+
+
+
+/*SpriteID get_sprite_id_from_archetype(EntityArchetype arch ) {
 	switch (arch)
 	{
-	case ARCH_item_pine_wood: return SPRITE_item_pine_wood;	break;
-	case ARCH_item_cyan_pigment: return SPRITE_item_cyan_pigment;break;
-	case ARCH_item_magenta_pigment: return SPRITE_item_magenta_pigment;	break;
-	case ARCH_item_rock: return SPRITE_item_rock;	break;
+	case ITEM_pine_wood: return SPRITE_item_pine_wood;	break;
+	case ITEM_cyan_pigment: return SPRITE_item_cyan_pigment;break;
+	case ITEM_magenta_pigment: return SPRITE_item_magenta_pigment;	break;
+	case ITEM_rock: return SPRITE_item_rock;	break;
 
 	default: return 0;
 	}
 }
-
-string get_archetype_pretty_name (EntityArchetype arch) {
-	switch (arch)
-	{
-	case ARCH_item_pine_wood: return STR("Pine Wood");
-	case ARCH_item_rock: return STR("Rock");
-	case ARCH_item_cyan_pigment: return STR("Cyan Pigment");
-	case ARCH_item_magenta_pigment: return STR("Magenta Pigment");
-	default: return STR("nil");
-	}
-}
-
+*/
 
 typedef struct Entity {
 	bool is_valid;
 	EntityArchetype arch;
+	ItemID item_id;
 	Vector2 pos;
 	bool render_sprite;
 	SpriteID sprite_id;
 	int health;
 	bool detroyable_world_item;
 	bool is_item;
+	bool workbench_thing;
+	ItemID current_crafting_item;
+	int current_crafting_amount;
+	float64 crafting_end_time;
 } Entity;
 
-#define MAX_INVENTORY_COUNT arch_MAX;
-
-typedef struct ItemData {
-	int amount;
-} ItemData;
 
 // :building resource
 // NOTE - a "resource" is a thing that we set up during startup, and is constant.
@@ -201,7 +247,7 @@ typedef enum BuildingID {
 	BUILDING_nil,
 	BUILDING_furnace,
 	BUILDING_workbench,
-	BUILDING_research_station,
+	//BUILDING_research_station,
 	BUILDING_paint_station,
 	BUILDING_MAX,
 } BuildingID;
@@ -226,18 +272,21 @@ typedef enum UXState {
 	UX_inventory,
 	UX_building,
 	UX_place_mode,
+	UX_workbench,
 } UXState;
 
 typedef struct World {
 	Entity entities[MAX_ENTITY_COUNT];
-	ItemData iventory_items[ARCH_MAX];
+	InventoryItemData inventory_items[ITEM_MAX];
 	UXState ux_state;
 	float inventory_alpha;
 	float inventory_alpha_target;
 	float building_alpha;
 	float building_alpha_target;
 	BuildingID placing_building;
-	
+	Entity* open_workbench;
+	ItemID selected_crafting_item;
+	// :world :state
 } World;
 World* world = 0;
 
@@ -251,7 +300,25 @@ typedef struct WorldFrame {
 } WorldFrame;
 WorldFrame world_frame;
 
+SpriteID get_sprite_id_from_item(ItemID item) {
+	switch (item) {
+		case ITEM_pine_wood: return SPRITE_item_pine_wood; break;
+		case ITEM_rock: return SPRITE_item_rock; break;
+		case ITEM_cyan_pigment: return SPRITE_item_cyan_pigment; break;
+		case ITEM_magenta_pigment: return SPRITE_item_magenta_pigment; break;
+		default: return 0;
+	}
+}
 
+string get_archetype_pretty_name (EntityArchetype arch) {
+	switch (arch)
+	{
+	case ARCH_furnace: return STR("Furnace");
+	case ARCH_workbench: return STR("Workbench");
+	case ARCH_paint_station: return STR("Paint Station");
+	default: return STR("nil");
+	}
+}
 
 Entity* entity_create() {
 	Entity* entity_found = 0;
@@ -276,11 +343,19 @@ void entity_destroy(Entity* entity) {
 void setup_furnace (Entity* en) {
 	en->arch = ARCH_furnace;
 	en->sprite_id = SPRITE_furnace;
+	en->workbench_thing = true;
 }
 
 void setup_workbench (Entity* en) {
 	en->arch = ARCH_workbench;
 	en->sprite_id = SPRITE_workbench;
+	en->workbench_thing = true;
+}
+
+void setup_paint_station (Entity* en) {
+	en->arch = ARCH_paint_station;
+	en->sprite_id = SPRITE_paintStation;
+	en->workbench_thing = true;
 }
 
 void setup_flower(Entity* en) {
@@ -306,28 +381,11 @@ void setup_rock(Entity* en) {
 	en->detroyable_world_item = true;
 }
 
-void setup_item_pine_wood(Entity* en) {
-	en->arch = ARCH_item_pine_wood;
-	en->sprite_id = SPRITE_item_pine_wood;
+void setup_item(Entity* en, ItemID item_id) {
+	en->arch = ARCH_item;
+	en->sprite_id = get_sprite_id_from_item(item_id);
 	en->is_item = true;
-}
-
-void setup_item_rock(Entity* en) {
-	en->arch = ARCH_item_rock;
-	en->sprite_id = SPRITE_item_rock;
-	en->is_item = true;
-}
-
-void setup_item_flower0(Entity* en) {
-	en->arch = ARCH_item_cyan_pigment;
-	en->sprite_id = SPRITE_item_cyan_pigment;
-	en->is_item = true;
-}
-
-void setup_item_flower1(Entity* en) {
-	en->arch = ARCH_item_magenta_pigment;
-	en->sprite_id = SPRITE_item_magenta_pigment;
-	en->is_item = true;
+	en->item_id = item_id;
 }
 
 void setup_player(Entity* en) {
@@ -339,6 +397,7 @@ void entity_setup(Entity* en, EntityArchetype id) {
 	switch (id) {
 		case ARCH_furnace: setup_furnace(en); break;
 		case ARCH_workbench: setup_workbench(en); break;
+		case ARCH_paint_station: setup_paint_station(en); break;
 		default: log_error("missing entity_setup case entry"); break;
 	}
 }
@@ -417,7 +476,7 @@ void do_ui_stuff() {
 		int item_count = 0;
 
 		for(int i = 0; i < ARCH_MAX; i++ ) {
-			ItemData* item = &world->iventory_items[i];
+			InventoryItemData* item = &world->inventory_items[i];
 			if (item->amount > 0) {
 				item_count += 1;
 			}
@@ -438,16 +497,16 @@ void do_ui_stuff() {
 		}
 			
 		int slot_index = 0;
-		for(int i = 0; i < ARCH_MAX; i++ ) {
-			
-		ItemData* item = &world->iventory_items[i];
+		for(int i = 1; i < ITEM_MAX; i++ ) {
+			ItemData item_data = get_item_data(i);
+			InventoryItemData* item = &world->inventory_items[i];
 		if (item->amount > 0) {
 
 			float slot_index_offset = slot_index * icon_width;
 
 			Matrix4 xform = m4_scalar(1.0);
 			xform = m4_translate(xform, v3(x_start_pos + slot_index_offset, y_pos, 0.0));						
-			Sprite* sprite = get_sprite(get_sprite_id_from_archetype(i));
+			Sprite* sprite = get_sprite(get_sprite_id_from_item(i));
 					
 			float is_selected_alpha = 0.0;
 
@@ -455,7 +514,7 @@ void do_ui_stuff() {
 			Range2f icon_box = quad_to_range(*quad);
 
 			if(is_inventory_enabled && range2f_contains(icon_box, get_mouse_pos_in_ndc())) {
-			is_selected_alpha = 1.0;
+				is_selected_alpha = 1.0;
 			}
 							
 			Matrix4 box_bottom_right_xform = xform;
@@ -464,14 +523,14 @@ void do_ui_stuff() {
 
 			if(is_selected_alpha == 1.0)
 					
-			{ // todo - selection polish		
+			{ 
 				float scale_adjust = 0.3; // * sin_breathe(os_get_current_time_in_seconds(), 20.0);
 				xform = m4_scale(xform, v3(1 + scale_adjust, 1 + scale_adjust, 1));	
 			}
-			{// could also rotate
-			
-			//	float adjust = PI32 * 2 * sin_breathe(os_get_current_time_in_seconds(), 1.0);
-			//	xform = m4_rotate_z(xform, adjust);	
+			{
+				// could also rotate
+				//	float adjust = PI32 * 2 * sin_breathe(os_get_current_time_in_seconds(), 1.0);
+				//	xform = m4_rotate_z(xform, adjust);	
 			}
 			xform = m4_translate(xform, v3(get_sprite_size(sprite).x * -0.5, get_sprite_size(sprite).y * -0.5, 0));
 			draw_image_xform(sprite->image, xform, get_sprite_size(sprite), COLOR_WHITE);
@@ -500,7 +559,7 @@ void do_ui_stuff() {
 
 				float current_y_pos = icon_center.y;
 				{
-				string title = get_archetype_pretty_name(i);
+				string title = item_data.pretty_name;
 
 				Gfx_Text_Metrics metrics = measure_text(font, title, font_height, v2(0.1, 0.1));
 				Vector2 draw_pos = icon_center;
@@ -515,7 +574,6 @@ void do_ui_stuff() {
 				current_y_pos = draw_pos.y;
 				}
 					{
-					// item->amount;
 					string text = STR("x%i");
 					text = sprint(temp_allocator, text, item->amount);
 
@@ -616,13 +674,234 @@ void do_ui_stuff() {
 			}
 			set_screen_space();
 		}
+
+	// :workbench ui
+	if (world->ux_state == UX_workbench && world->open_workbench) {
+		Entity* workbench_en = world->open_workbench;
+		
+		Vector2 section_size = v2(50.0, 70.0);
+		float gap_between_panels = 10.0;
+		float text_height_pad = 4.0;
+		Vector4 bg_col = v4(0, 0, 0, 0.7);
+		Vector4 fill_col = v4(0.5, 0.5, 0.5, 1.0);
+
+		float ui_width_thing = section_size.x * 2.0 + gap_between_panels;
+
+		float x0 = screen_width * 0.5 - ui_width_thing * 0.5;
+		float y0 = screen_height * 0.5 - section_size.y * 0.5;
+		{
+			Matrix4 xform = m4_identity;
+			xform = m4_translate(xform, v3(x0, y0, 0));
+			draw_rect_xform(xform, section_size, bg_col);
+
+			// title
+			float x1 = x0;
+			float y1 = y0 + section_size.y;
+			{
+				string title = get_archetype_pretty_name(workbench_en->arch);
+				Gfx_Text_Metrics metrics = measure_text(font, title, font_height, v2(0.1, 0.1));
+
+				float center_pos = x0 + section_size.x * 0.5;
+				Vector2 draw_pos = v2(center_pos, y1);
+				draw_pos = v2_sub(draw_pos, metrics.visual_pos_min);
+				draw_pos = v2_add(draw_pos, v2_mul(metrics.visual_size, v2(-0.5, -1.0))); // top center
+				draw_pos.y -= text_height_pad;
+
+				draw_text(font, title, font_height, draw_pos, v2(0.1, 0.1), COLOR_WHITE);
+
+				y1 = draw_pos.y; 
+				y1 -= text_height_pad;
+			}
+
+			Vector2 item_icon_size = v2(8, 8);
+
+			y1 -= item_icon_size.y;
+
+			// draw all item recipes
+			for(int i = 1; i < ITEM_MAX; i++){
+				ItemData data = get_item_data(i);
+				if (data.for_structure == workbench_en->arch && get_crafting_recipe_count(data)) {
+					Matrix4 xform = m4_identity;
+					xform = m4_translate(xform, v3(x1, y1, 0));
+
+					Vector4 col = COLOR_WHITE;
+					if (world->selected_crafting_item == i) {
+						col = COLOR_RED;
+					}
+
+					Draw_Quad* quad = draw_image_xform(get_sprite(get_sprite_id_from_item(i))->image, xform, item_icon_size, col);
+					Range2f icon_box = quad_to_range(*quad);
+					if(range2f_contains(icon_box, get_mouse_pos_in_ndc())) {
+						if(is_key_just_pressed(MOUSE_BUTTON_LEFT)) {
+							consume_key_just_pressed(MOUSE_BUTTON_LEFT);
+							world->selected_crafting_item = i;
+						}
+					}
+					x1 += item_icon_size.x;
+				}
+			}
+		}
+
+		x0 += section_size.x;
+		x0 += gap_between_panels;
+		Vector2 bottom_left_right_pane = v2(x0, y0);
+		Vector2 top_left_right_pane = v2(x0, y0 + section_size.y);
+
+		// right pane
+		{
+		 	Matrix4 xform = m4_identity;
+			xform = m4_translate(xform, v3(x0, y0, 0));
+		 	draw_rect_xform(xform, section_size, bg_col);		
+
+			if(world->selected_crafting_item) {
+				ItemData selected_item_data = get_item_data(world->selected_crafting_item);
+
+				// title of item
+				y0 += section_size.y;
+				{
+					string title = selected_item_data.pretty_name;
+					Gfx_Text_Metrics metrics = measure_text(font, title, font_height, v2(0.1, 0.1));
+
+					float center_pos = x0 + section_size.x * 0.5;
+					Vector2 draw_pos = v2(center_pos, x0);
+					draw_pos = v2_sub(draw_pos, metrics.visual_pos_min);
+					draw_pos = v2_add(draw_pos, v2_mul(metrics.visual_size, v2(-0.5, -1.0))); //top center
+					draw_pos.y -= text_height_pad;
+
+					draw_text(font, title, font_height, draw_pos, v2(0.1, 0.1), COLOR_WHITE);
+
+					y0 = draw_pos.y;
+					y0 -= text_height_pad;
+				}
+
+				y0 = bottom_left_right_pane.y + 30.0;
+
+				// list out the ingredients
+				for (int i = 0; i < get_crafting_recipe_count(selected_item_data); i++) {
+					ItemAmount ingredient_amount = selected_item_data.crafting_recipe[i];
+					ItemData ingredient_item_data = get_item_data(ingredient_amount.id);
+
+					Vector2 element_size = v2(section_size.x * 0.8, 6.0);
+
+					x0 = bottom_left_right_pane.x + (section_size.x - element_size.x) * 0.5;
+
+					// bg box thing
+					draw_rect(v2(x0, y0), element_size, fill_col);
+
+					// icon
+					{
+						float item_icon_length = element_size.y * 0.8;
+
+						float x1 = bottom_left_right_pane.x + section_size.x * 0.5 - element_size.y;
+						float y1 = y0 + (item_icon_length - element_size.y) * 0.5;
+
+						Matrix4 xform = m4_identity;
+						xform = m4_translate(xform, v3(x1, y1, 0));
+						Draw_Quad* quad = draw_image_xform(get_sprite(get_sprite_id_from_item(ingredient_amount.id))->image, xform, v2(item_icon_length, item_icon_length), COLOR_WHITE);
+						Range2f icon_box = quad_to_range(*quad);
+						if (range2f_contains(icon_box, get_mouse_pos_in_ndc())) {
+
+						}
+					}
+
+					InventoryItemData inv_item = world->inventory_items[ingredient_amount.id];
+					Vector4 txt_col = COLOR_WHITE;
+					if (inv_item.amount < ingredient_amount.amount) {
+						txt_col = COLOR_RED;
+					}
+
+					string txt = tprint("%i/%i", inv_item.amount, ingredient_amount.amount);
+					Gfx_Text_Metrics metrics = measure_text(font, txt, font_height, v2(0.1, 0.1));
+					float center_pos = bottom_left_right_pane.x + section_size.x * 0.5;
+					Vector2 draw_pos = v2(center_pos, y0 + element_size.y * 0.5);
+					draw_pos = v2_sub(draw_pos, metrics.visual_pos_min);
+					draw_pos = v2_sub(draw_pos, v2_mul(metrics.visual_size, v2(0, 0.5)));
+					draw_text(font, txt, font_height, draw_pos, v2(0.1, 0.1), txt_col);
+
+					y0 -= element_size.y;
+					y0 -= 2.0f; // padding @cleanup
+				}	
+
+				// craft button
+				{
+					Vector2 size = v2(section_size.x * 0.8, 6.0);
+
+					x0 = bottom_left_right_pane.x + (section_size.x - size.x) * 0.5;
+					y0 = bottom_left_right_pane.y;
+					y0 += 5.0f; // padding from bottom @cleanup
+
+					// check for all ingredients met
+					bool has_enough_for_crafting = true;
+					for (int i = 0; i < get_crafting_recipe_count(selected_item_data); i++) {
+						ItemAmount ingredient_amount = selected_item_data.crafting_recipe[i];
+						if (ingredient_amount.amount > world->inventory_items[ingredient_amount.id].amount) {
+							has_enough_for_crafting = false;
+							break;
+						}
+					}
+
+					Range2f btn_range = range2f_make_bottom_right(v2(x0, y0), size);
+					Vector4 col = fill_col;
+					if (has_enough_for_crafting && range2f_contains(btn_range, get_mouse_pos_in_world_space())) {
+						col = COLOR_RED;
+						world_frame.hover_consumed = true;
+						// TODO - where do we put the state for the animation of the button?
+						// Either just manually rip it via the App state, or some kind of hash string thing that's probably overcomplicated as shit.
+						if (is_key_just_pressed(MOUSE_BUTTON_LEFT)) {
+							consume_key_just_pressed(MOUSE_BUTTON_LEFT);
+						// :craft!
+							workbench_en->current_crafting_item = world->selected_crafting_item;
+							workbench_en->current_crafting_amount += 1;
+							// remove ingredients from inventory
+							for (int i = 0; i < get_crafting_recipe_count(selected_item_data); i++) {
+								ItemAmount ingredient_amount = selected_item_data.crafting_recipe[i];
+								world->inventory_items[ingredient_amount.id].amount -= ingredient_amount.amount;
+								assert(world->inventory_items[ingredient_amount.id].amount >= 0, "removed too many items. the check above must have failed!");
+							}
+						}
+					}
+					// todo - disable button with has_enough_for_crafting
+					draw_rect(v2(x0, y0), size, col);
+
+					string txt = STR("CRAFT");
+					Gfx_Text_Metrics metrics = measure_text(font, txt, font_height, v2(0.1, 0.1));
+					float center_pos = bottom_left_right_pane.x + section_size.x * 0.5;
+					Vector2 draw_pos = v2(center_pos, y0 + size.y * 0.5);
+					draw_pos = v2_sub(draw_pos, metrics.visual_pos_min);
+					draw_pos = v2_sub(draw_pos, v2_mul(metrics.visual_size, v2(0.5, 0.5)));
+
+					draw_text(font, txt, font_height, draw_pos, v2(0.1, 0.1), COLOR_WHITE);
+				}
+				
+			} else {
+				// select item first text
+			}
+				y0 += section_size.y * 0.5;
+				{
+					string title = STR("Select Item to Craft");
+					Gfx_Text_Metrics metrics = measure_text(font, title, font_height, v2(0.1, 0.1));
+
+					Vector2 draw_pos = v2(x0 + section_size.x * 0.5, y0);
+					draw_pos = v2_sub(draw_pos, metrics.visual_pos_min);
+					draw_pos = v2_sub(draw_pos, v2_mul(metrics.visual_size, v2(0.5, 0.5)));
+
+					draw_text(font, title, font_height, draw_pos, v2(0.1, 0.1), COLOR_WHITE);
+				}
+		}
+				world_frame.hover_consumed = true;
+
+	}
+	if (world->ux_state != UX_nil && is_key_just_pressed(KEY_ESCAPE)) {
+		consume_key_just_pressed(KEY_ESCAPE);
+		world->ux_state = 0;
+	}
+
 	set_world_space();
 	pop_z_layer();
 }
 
 
 int entry(int argc, char **argv) {
-
 	window.title = fixed_string("El Santi Juego");
 	window.width = 1280; // We need to set the scaled size if we want to handle system scaling (DPI)
 	window.height = 720; 
@@ -666,18 +945,32 @@ int entry(int argc, char **argv) {
 		buildings[BUILDING_furnace] = (BuildingData){ .to_build=ARCH_furnace, .icon=SPRITE_furnace};
 		buildings[BUILDING_workbench] = (BuildingData){ .to_build=ARCH_workbench, .icon=SPRITE_workbench};
 		buildings[BUILDING_paint_station] = (BuildingData){ .to_build=ARCH_paint_station, .icon=SPRITE_paintStation};
+	}
+
+	// item data resource setup
+	{
+		// do defaults
+		for (ItemID i = 1; i < ITEM_MAX; i++) {
+			ItemData* data = &item_data[i];
+			data->craft_length = 2.0;
+		}
+
+		item_data[ITEM_rock] = (ItemData){ .pretty_name=STR("Rock"), .for_structure=ARCH_furnace, .crafting_recipe ={ {ITEM_pine_wood, 2} } };
+		item_data[ITEM_pine_wood] = (ItemData){ .pretty_name=STR("Pine Wood"), .for_structure=ARCH_workbench, .crafting_recipe ={ {ITEM_pine_wood, 5}, {ITEM_rock, 1} } };
+		item_data[ITEM_cyan_pigment] = (ItemData){ .pretty_name=STR("Cyan Pigment"), .for_structure=ARCH_paint_station, .crafting_recipe ={ {ITEM_cyan_pigment, 2} } };
 
 	}
 
-	// :init
+
+	// :init 
 
 	// test stuff
 	// TODO - @ship debug this off
 	{
-		world->iventory_items[ARCH_item_pine_wood].amount = 0;
-		world->iventory_items[ARCH_item_cyan_pigment].amount = 0;
-		world->iventory_items[ARCH_item_magenta_pigment].amount = 0;
-		world->iventory_items[ARCH_item_rock].amount = 0;	
+		world->inventory_items[ITEM_pine_wood].amount = 50;
+		world->inventory_items[ITEM_cyan_pigment].amount = 50;
+		world->inventory_items[ITEM_magenta_pigment].amount = 50;
+		world->inventory_items[ITEM_rock].amount = 50;	
 
 		Entity* en = entity_create();
 		setup_furnace(en);	
@@ -724,9 +1017,9 @@ int entry(int argc, char **argv) {
 	while (!window.should_close) {
 		reset_temporary_storage();
 		world_frame = (WorldFrame){0};
-		float64 now = os_get_elapsed_seconds();
-		delta_t = now - last_time;
-		last_time = now;
+		float64 current_time = os_get_elapsed_seconds();
+		delta_t = current_time - last_time;
+		last_time = current_time;
 		os_update(); 
 		
 		// :frame :update
@@ -763,9 +1056,8 @@ int entry(int argc, char **argv) {
 			// :selected entity system		
 			for (int i = 0; i < MAX_ENTITY_COUNT; i++) {
 				Entity* en = &world->entities[i];
-				EntityArchetype entity_archetype_selected = en->arch;
 				
-				if(en->is_valid && entity_archetype_selected > 1 && en->detroyable_world_item) {
+				if(en->is_valid && (en->detroyable_world_item || en->workbench_thing)) {
 					Sprite* sprite = get_sprite(en->sprite_id);
 
 					int entity_tile_x = world_pos_to_tile_pos(en->pos.x);
@@ -809,23 +1101,51 @@ int entry(int argc, char **argv) {
 		for (int i = 0; i < MAX_ENTITY_COUNT; i++) {
 			Entity* en = &world->entities[i];
 			if(en->is_valid) {
+				if (en->workbench_thing) {
+					if (en->current_crafting_item) {
+						float length = en->current_crafting_item;
+						if (en->crafting_end_time == 0) {
+							en->crafting_end_time = now() + length;
+						}
+
+						float alpha = alpha_from_end_time(en->crafting_end_time, length);
+						// log("%f", alpha);
+
+						if (has_reached_end_time(en->crafting_end_time)) {
+							// craft thing
+							{
+								Entity* item = entity_create();
+								setup_item(item, en->current_crafting_item);
+								item->pos = en->pos;
+							}
+							en->current_crafting_amount -= 1;
+							en->crafting_end_time = 0;
+							assert(en->current_crafting_amount >= 0, "fuckie wuckie");
+							if (en->current_crafting_amount == 0) {
+								en->current_crafting_item = 0;
+							}
+						}
+					}
+				}
 
 				// pick up item
 				if(en->is_item) {
 					//TODO - physics pickup
 
 					if (fabsf(v2_dist(en->pos, player_en->pos)) < player_pickup_radius) {
-						world->iventory_items[en->arch].amount += 1;
+						world->inventory_items[en->item_id].amount += 1;
 						entity_destroy(en);
 					}
 				}					
 			}
 		}
 		
-		// :click destroy
-		{
+		// :selection stuff
+	{
 			Entity* selected_en = world_frame.selected_entity;
 
+		// :click destroy
+		if (selected_en && selected_en->detroyable_world_item) {
 			if(is_key_just_pressed(MOUSE_BUTTON_LEFT)) {
 				consume_key_just_pressed(MOUSE_BUTTON_LEFT);
 
@@ -836,19 +1156,19 @@ int entry(int argc, char **argv) {
 						switch (selected_en->arch) {
 						case ARCH_flower: {							
 							Entity* en = entity_create();
-							setup_item_flower0(en);
+							setup_item(en, ITEM_cyan_pigment);
 							en->pos = selected_en->pos;							
 						}
 						break;
 						case ARCH_tree: {							
 							Entity* en = entity_create();
-							setup_item_pine_wood(en);
+							setup_item(en, ITEM_pine_wood);
 							en->pos = selected_en->pos;							
 						}
 						break;
 						case ARCH_rock: {							
 							Entity* en = entity_create();
-							setup_item_rock(en);
+							setup_item(en, ITEM_rock);
 							en->pos = selected_en->pos;							
 						}
 						break;
@@ -861,6 +1181,16 @@ int entry(int argc, char **argv) {
 			}
 		}
 
+		// :interact
+		if (selected_en && selected_en->workbench_thing) {
+			if(is_key_just_pressed(MOUSE_BUTTON_LEFT)) {
+				consume_key_just_pressed(MOUSE_BUTTON_LEFT);
+
+				world->ux_state = UX_workbench;
+				world->open_workbench = selected_en;
+			}
+		}
+	}
 
 		// :render entities
 		for (int i = 0; i < MAX_ENTITY_COUNT; i++) {
@@ -876,10 +1206,10 @@ int entry(int argc, char **argv) {
 							xform = m4_translate(xform, v3(0, 2.0 * sin_breathe(os_get_elapsed_seconds(), 10.0), 0));
 						}
 						
-						// @volatile with building placement
+						// @volatile with entity placement
 						xform         = m4_translate(xform, v3(0, tile_width * -0.5, 0));
 						xform         = m4_translate(xform, v3(en->pos.x, en->pos.y, 0));
-						xform         = m4_translate(xform, v3(sprite->image->width * -0.5, 0.0, 0));
+						xform         = m4_translate(xform, v3(get_sprite_size(sprite).x * -0.5, 0.0, 0));
 
 						Vector4 col = COLOR_WHITE;
 						if (world_frame.selected_entity == en) {
@@ -894,17 +1224,35 @@ int entry(int argc, char **argv) {
 					break;					
 					}					
 				}
+
+				// craft progress bar thing
+				if (en->current_crafting_item && en->workbench_thing) {
+					float radius = 4.0; 
+
+					{
+						Matrix4 xform = m4_identity;
+						xform = m4_translate(xform, v3(en->pos.x, en->pos.y + 14.0, 0));
+						xform = m4_translate(xform, v3(-radius, -radius, 0));
+						draw_circle_xform(xform, v2(radius*2, radius*2), COLOR_WHITE);
+					}
+
+					ItemData craft_item_data = get_item_data(en->current_crafting_item);
+
+					float alpha = alpha_from_end_time(en->crafting_end_time, en->current_crafting_item);
+
+					{
+						Matrix4 xform = m4_identity;
+						xform = m4_translate(xform, v3(en->pos.x, en->pos.y + 14.0, 0));
+						xform = m4_scale(xform, v3(alpha, alpha, 1.0));
+						xform = m4_translate(xform, v3(-radius, -radius, 0));
+						draw_circle_xform(xform, v2(radius*2, radius*2), COLOR_BLACK);
+					}
+				}
 			}
 		}
 
 
 		// input		
-		{
-		if (is_key_just_pressed(KEY_ESCAPE)) {
-			window.should_close = true;
-		}
-		
-
 		Vector2 input_axis = v2(0, 0);
 		if (is_key_down('A')) {
 			input_axis.x -= 1.0;
@@ -932,7 +1280,7 @@ int entry(int argc, char **argv) {
 			frame_count = 0;
 		}
 		}
-	}
+	
 	
 	
 	return 0;
